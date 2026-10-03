@@ -1401,7 +1401,8 @@ namespace Files.App.Views.Layouts
 						if (shellViewModel.IsScrollInFlight)
 							return;
 
-						await LoadItemExtendedPropertiesAsync(listedItem, shellViewModel);
+						// Off the UI thread like the settle pass; its per-file shell and storage calls otherwise stall rendering
+						await Task.Run(() => LoadItemExtendedPropertiesAsync(listedItem, shellViewModel));
 					});
 				}
 			}
