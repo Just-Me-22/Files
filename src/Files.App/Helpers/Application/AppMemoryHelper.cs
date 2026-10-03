@@ -1,8 +1,6 @@
 // Copyright (c) Files Community
 // SPDX-License-Identifier: MPL-2.0
 
-using Windows.Win32;
-
 namespace Files.App.Helpers
 {
 	/// <summary>
@@ -63,14 +61,6 @@ namespace Files.App.Helpers
 						Collect();
 						if (workingSetBefore - Environment.WorkingSet < SweepContinueBytes)
 							break;
-					}
-
-					// Remaining idle pages move to the standby list so the process footprint shrinks immediately
-					if (Volatile.Read(ref trimRequested) == 0 &&
-						Environment.TickCount64 - Interlocked.Read(ref lastActivityTicks) >= QuietWindowMs)
-					{
-						using var process = Process.GetCurrentProcess();
-						PInvoke.K32EmptyWorkingSet(new Windows.Win32.Foundation.HANDLE(process.Handle));
 					}
 				}
 
