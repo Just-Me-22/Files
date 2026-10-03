@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -1440,7 +1441,9 @@ namespace Files.App.ViewModels
 							IconOptions.ReturnThumbnailOnly | IconOptions.ReturnOnlyIfCached);
 
 					cancellationToken.ThrowIfCancellationRequested();
-					loadNonCachedThumbnail = true;
+
+					// The cache may only hold a smaller rendition (e.g. Explorer's 96px), which still needs the full fetch
+					loadNonCachedThumbnail = result is null || IsSmallerThan(result, thumbnailSize * App.AppModel.AppWindowDPI);
 				}
 
 				// Skip the per-item icon fetch when the preloaded per-extension icon cannot differ from the final icon
@@ -1587,6 +1590,10 @@ namespace Files.App.ViewModels
 				}, cancellationToken);
 			}
 		}
+
+		// Shell thumbnails arrive PNG-encoded; width and height sit at fixed offsets in the IHDR chunk
+		private static bool IsSmallerThan(byte[] png, double size)
+			=> png.Length < 24 || BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16)) < size && BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20)) < size;
 
 		private static bool HasPerFileIcon(string? extension)
 			=> extension is not null && _perFileIconExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
