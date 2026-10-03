@@ -10,7 +10,14 @@ namespace Files.App.Utils.Cloud
 	{
 		public string? Glyph { get; }
 
-		public Style? ThemedIconStyle { get; }
+		private readonly string? _themedIconStyleKey;
+
+		// Looked up on read: instances are built on background threads, where resource lookups throw RPC_E_WRONG_THREAD
+		public Style? ThemedIconStyle
+		{
+			[DynamicWindowsRuntimeCast(typeof(Style))]
+			get => _themedIconStyleKey is null ? null : (Style)Application.Current.Resources[_themedIconStyleKey];
+		}
 
 		public CloudDriveSyncStatus SyncStatus { get; }
 
@@ -28,37 +35,36 @@ namespace Files.App.Utils.Cloud
 			SyncStatus = syncStatus;
 		}
 
-		private CloudDriveSyncStatusUI(string glyph, Style themedIconStyle, CloudDriveSyncStatus syncStatus, string SyncStatusStringKey)
+		private CloudDriveSyncStatusUI(string glyph, string themedIconStyleKey, CloudDriveSyncStatus syncStatus, string SyncStatusStringKey)
 		{
 			SyncStatus = syncStatus;
 			Glyph = glyph;
-			ThemedIconStyle = themedIconStyle;
+			_themedIconStyleKey = themedIconStyleKey;
 			LoadSyncStatus = true;
 			SyncStatusString = SyncStatusStringKey.GetLocalizedResource();
 		}
 
-		[DynamicWindowsRuntimeCast(typeof(Style))]
 		public static CloudDriveSyncStatusUI FromCloudDriveSyncStatus(CloudDriveSyncStatus syncStatus) => syncStatus switch
 		{
 			// File
 			CloudDriveSyncStatus.FileOnline
-				=> new CloudDriveSyncStatusUI("\uE753", (Style)Application.Current.Resources["App.ThemedIcons.Status.Cloud"], syncStatus, "CloudDriveSyncStatus_Online"),
+				=> new CloudDriveSyncStatusUI("\uE753", "App.ThemedIcons.Status.Cloud", syncStatus, "CloudDriveSyncStatus_Online"),
 			CloudDriveSyncStatus.FileOffline
-				=> new CloudDriveSyncStatusUI("\uE73E", (Style)Application.Current.Resources["App.ThemedIcons.Status.Available"], syncStatus, "CloudDriveSyncStatus_Offline"),
+				=> new CloudDriveSyncStatusUI("\uE73E", "App.ThemedIcons.Status.Available", syncStatus, "CloudDriveSyncStatus_Offline"),
 			CloudDriveSyncStatus.FileOfflinePinned
-				=> new CloudDriveSyncStatusUI("\uE73E", (Style)Application.Current.Resources["App.ThemedIcons.Status.KeepOffline"], syncStatus, "CloudDriveSyncStatus_Offline"),
+				=> new CloudDriveSyncStatusUI("\uE73E", "App.ThemedIcons.Status.KeepOffline", syncStatus, "CloudDriveSyncStatus_Offline"),
 			CloudDriveSyncStatus.FileSync
-				=> new CloudDriveSyncStatusUI("\uE895", (Style)Application.Current.Resources["App.ThemedIcons.Status.Syncing"], syncStatus, "CloudDriveSyncStatus_Sync"),
+				=> new CloudDriveSyncStatusUI("\uE895", "App.ThemedIcons.Status.Syncing", syncStatus, "CloudDriveSyncStatus_Sync"),
 
 			//// Folder
 			CloudDriveSyncStatus.FolderOnline or CloudDriveSyncStatus.FolderOfflinePartial
-				=> new CloudDriveSyncStatusUI("\uE753", (Style)Application.Current.Resources["App.ThemedIcons.Status.Cloud"], syncStatus, "CloudDriveSyncStatus_PartialOffline"),
+				=> new CloudDriveSyncStatusUI("\uE753", "App.ThemedIcons.Status.Cloud", syncStatus, "CloudDriveSyncStatus_PartialOffline"),
 			CloudDriveSyncStatus.FolderOfflineFull or CloudDriveSyncStatus.FolderEmpty
-				=> new CloudDriveSyncStatusUI("\uE73E", (Style)Application.Current.Resources["App.ThemedIcons.Status.Available"], syncStatus, "CloudDriveSyncStatus_Offline"),
+				=> new CloudDriveSyncStatusUI("\uE73E", "App.ThemedIcons.Status.Available", syncStatus, "CloudDriveSyncStatus_Offline"),
 			CloudDriveSyncStatus.FolderOfflinePinned
-				=> new CloudDriveSyncStatusUI("\uE73E", (Style)Application.Current.Resources["App.ThemedIcons.Status.KeepOffline"], syncStatus, "CloudDriveSyncStatus_Offline"),
+				=> new CloudDriveSyncStatusUI("\uE73E", "App.ThemedIcons.Status.KeepOffline", syncStatus, "CloudDriveSyncStatus_Offline"),
 			CloudDriveSyncStatus.FolderExcluded
-				=> new CloudDriveSyncStatusUI("\uF140", (Style)Application.Current.Resources["App.ThemedIcons.Status.Unavailable"], syncStatus, "CloudDriveSyncStatus_Excluded"),
+				=> new CloudDriveSyncStatusUI("\uF140", "App.ThemedIcons.Status.Unavailable", syncStatus, "CloudDriveSyncStatus_Excluded"),
 
 			// Unknown
 			_ => new CloudDriveSyncStatusUI(syncStatus),
