@@ -38,15 +38,12 @@ namespace Files.Shared.Helpers
 			if (string.IsNullOrWhiteSpace(filePathToCheck))
 				return false;
 
-			// Don't check folder paths to avoid issues
-			// https://github.com/files-community/Files/issues/17094
-			if (Directory.Exists(filePathToCheck))
-				return false;
-
 			string pathExtension = Path.GetExtension(filePathToCheck);
 			foreach (string ext in extensions)
 				if (pathExtension.Equals(ext, StringComparison.OrdinalIgnoreCase))
-					return true;
+					// Don't check folder paths to avoid issues; only a matching full path can be one, bare extensions skip the disk lookup
+					// https://github.com/files-community/Files/issues/17094
+					return !Path.IsPathRooted(filePathToCheck) || !Directory.Exists(filePathToCheck);
 
 			return false;
 		}
