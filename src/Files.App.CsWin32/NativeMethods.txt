@@ -101,6 +101,10 @@ SHCreateItemFromParsingName
 SHCreateItemFromRelativeName
 WTS_E_NOSTORAGEPROVIDERTHUMBNAILHANDLER
 PKEY_FilePlaceholderStatus
+PKEY_FileFRN
+PKEY_Image_Dimensions
+PKEY_Media_Duration
+PKEY_FileVersion
 PLACEHOLDER_STATES
 FileSaveDialog
 IFileSaveDialog

@@ -664,6 +664,35 @@ namespace Files.App.Utils.Shell
 		public string? GetPropertyString(string propertyName)
 			=> PInvoke.PSGetPropertyKeyFromName(propertyName, out PROPERTYKEY key).Succeeded ? GetPropertyString(key) : null;
 
+		/// <summary>
+		/// Reads several properties through one property store; reading them one at a time opens a store per key.
+		/// </summary>
+		public object?[] GetValues(ReadOnlySpan<PROPERTYKEY> keys)
+		{
+			var values = new object?[keys.Length];
+
+			// Best effort keeps the other keys readable when one property handler fails, e.g. version info on a DLL without it
+			if (shellItem is null || shellItem.GetPropertyStoreForKeys(keys, GETPROPERTYSTOREFLAGS.GPS_BESTEFFORT, out IPropertyStore store).Failed)
+				return values;
+
+			for (var i = 0; i < keys.Length; i++)
+			{
+				if (store.GetValue(keys[i], out PROPVARIANT value).Failed)
+					continue;
+
+				try
+				{
+					values[i] = ToObject(value);
+				}
+				finally
+				{
+					PInvoke.PropVariantClear(ref value);
+				}
+			}
+
+			return values;
+		}
+
 		private object? GetValue(PROPERTYKEY key)
 		{
 			if (shellItem is null || shellItem.GetProperty(key, out PROPVARIANT value).Failed)
@@ -671,23 +700,25 @@ namespace Files.App.Utils.Shell
 
 			try
 			{
-				return value.vt switch
-				{
-					VARENUM.VT_LPWSTR => value.pwszVal.ToString(),
-					VARENUM.VT_BSTR => value.bstrVal.ToString(),
-					VARENUM.VT_BOOL => value.boolVal.Value is not 0,
-					VARENUM.VT_UI4 => value.ulVal,
-					VARENUM.VT_UI8 => value.uhVal,
-					VARENUM.VT_I4 => value.lVal,
-					VARENUM.VT_FILETIME => value.filetime,
-					_ => null,
-				};
+				return ToObject(value);
 			}
 			finally
 			{
 				PInvoke.PropVariantClear(ref value);
 			}
 		}
+
+		private static object? ToObject(PROPVARIANT value) => value.vt switch
+		{
+			VARENUM.VT_LPWSTR => value.pwszVal.ToString(),
+			VARENUM.VT_BSTR => value.bstrVal.ToString(),
+			VARENUM.VT_BOOL => value.boolVal.Value is not 0,
+			VARENUM.VT_UI4 => value.ulVal,
+			VARENUM.VT_UI8 => value.uhVal,
+			VARENUM.VT_I4 => value.lVal,
+			VARENUM.VT_FILETIME => value.filetime,
+			_ => null,
+		};
 	}
 
 	public static unsafe class InternetShortcut

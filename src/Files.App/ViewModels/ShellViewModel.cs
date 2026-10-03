@@ -25,6 +25,7 @@ using static Files.App.Helpers.Win32PInvoke;
 using ByteSize = ByteSizeLib.ByteSize;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using FileAttributes = System.IO.FileAttributes;
+using PROPERTYKEY = Windows.Win32.Foundation.PROPERTYKEY;
 
 namespace Files.App.ViewModels
 {
@@ -1607,42 +1608,58 @@ namespace Files.App.ViewModels
 			dbInstance.SetTags(item.GetRequiredPath(), item.FileFRN, item.FileTags ?? []);
 		}
 
+		private static readonly PROPERTYKEY[] _fileSyncPropertyKeys = [PInvoke.PKEY_FilePlaceholderStatus, PInvoke.PKEY_FileFRN];
+		private static readonly PROPERTYKEY[] _fileExtendedPropertyKeys = [PInvoke.PKEY_Image_Dimensions, PInvoke.PKEY_Media_Duration, PInvoke.PKEY_FileVersion];
+		private static readonly PROPERTYKEY[] _fileAllPropertyKeys = [.. _fileSyncPropertyKeys, .. _fileExtendedPropertyKeys];
+
+		// A folder-relative shell parse plus one property store costs about a fifth of a WinRT StorageFile and its separate property queries
+		private static Task<object?[]?> GetFilePropertiesAsync(string path, PROPERTYKEY[] keys)
+		{
+			// The shell can't parse \\?\ device paths, so phone (MTP) items go through their shell path like thumbnails do
+			var resolvedPath = path.StartsWith(@"\\?\", StringComparison.Ordinal) ? MtpHelpers.ResolveMtpShellPath(path) ?? path : path;
+
+			return STATask.RunPooled(() =>
+			{
+				using var shellItem = SafetyExtensions.IgnoreExceptions(() => ShellFolderExtensions.GetShellItemFromPathOrPIDL(resolvedPath));
+				return shellItem?.Properties.GetValues(keys);
+			}, App.Logger);
+		}
+
+		private static void SetExtendedFileProperties(ListedItem item, string? imageDimensions, ulong? mediaDuration, string? fileVersion)
+		{
+			item.ImageDimensions = imageDimensions ?? string.Empty;
+			item.FileVersion = fileVersion ?? string.Empty;
+			item.MediaDuration = mediaDuration is { } duration ? TimeSpan.FromTicks((long)duration).ToString(@"hh\:mm\:ss") : string.Empty;
+
+			switch (true)
+			{
+				case var _ when !string.IsNullOrEmpty(item.ImageDimensions):
+					item.ContextualProperty = $"{Strings.PropertyDimensions.GetLocalizedResource()}: {item.ImageDimensions}";
+					break;
+				case var _ when !string.IsNullOrEmpty(item.MediaDuration):
+					item.ContextualProperty = $"{Strings.PropertyDuration.GetLocalizedResource()}: {item.MediaDuration}";
+					break;
+				case var _ when !string.IsNullOrEmpty(item.FileVersion):
+					item.ContextualProperty = $"{Strings.PropertyVersion.GetLocalizedResource()}: {item.FileVersion}";
+					break;
+				default:
+					item.ContextualProperty = $"{Strings.Modified.GetLocalizedResource()}: {item.ItemDateModified}";
+					break;
+			}
+		}
+
 		// Loads extended file properties off the critical path so a slow per-file read never blocks the row's essentials.
-		private async Task LoadExtendedFilePropertiesInBackgroundAsync(ListedItem item, BaseStorageFile file, CancellationToken token)
+		private async Task LoadExtendedFilePropertiesInBackgroundAsync(ListedItem item, CancellationToken token)
 		{
 			try
 			{
-				var extraProperties = await GetExtraProperties(file);
-
-				if (token.IsCancellationRequested)
+				var properties = await GetFilePropertiesAsync(item.GetRequiredPath(), _fileExtendedPropertyKeys);
+				if (properties is null || token.IsCancellationRequested)
 					return;
 
-				var properties = extraProperties?.Result;
-				if (properties is null)
-					return;
-
-				await dispatcherQueue.EnqueueOrInvokeAsync(() =>
-				{
-					item.ImageDimensions = properties["System.Image.Dimensions"]?.ToString() ?? string.Empty;
-					item.FileVersion = properties["System.FileVersion"]?.ToString() ?? string.Empty;
-					item.MediaDuration = ulong.TryParse(properties["System.Media.Duration"]?.ToString(), out ulong duration)
-							? TimeSpan.FromTicks((long)duration).ToString(@"hh\:mm\:ss")
-							: string.Empty;
-
-					switch (true)
-					{
-						case var _ when !string.IsNullOrEmpty(item.ImageDimensions):
-							item.ContextualProperty = $"{Strings.PropertyDimensions.GetLocalizedResource()}: {item.ImageDimensions}";
-							break;
-						case var _ when !string.IsNullOrEmpty(item.MediaDuration):
-							item.ContextualProperty = $"{Strings.PropertyDuration.GetLocalizedResource()}: {item.MediaDuration}";
-							break;
-						case var _ when !string.IsNullOrEmpty(item.FileVersion):
-							item.ContextualProperty = $"{Strings.PropertyVersion.GetLocalizedResource()}: {item.FileVersion}";
-							break;
-					}
-				},
-				Microsoft.UI.Dispatching.DispatcherQueuePriority.Low);
+				await dispatcherQueue.EnqueueOrInvokeAsync(
+					() => SetExtendedFileProperties(item, properties[0] as string, properties[1] as ulong?, properties[2] as string),
+					Microsoft.UI.Dispatching.DispatcherQueuePriority.Low);
 			}
 			catch (OperationCanceledException)
 			{
@@ -1692,7 +1709,6 @@ namespace Files.App.ViewModels
 				try
 				{
 					var isFileTypeGroupMode = folderSettings.DirectoryGroupOption == GroupOption.FileType;
-					BaseStorageFile? matchingStorageFile = null;
 					if (item.Key is not null && FilesAndFolders.IsGrouped && FilesAndFolders.GetExtendedGroupHeaderInfo is not null)
 					{
 						gp = FilesAndFolders.GroupedCollection?.ToList().FirstOrDefault(x => x.Model.Key == item.Key);
@@ -1709,18 +1725,16 @@ namespace Files.App.ViewModels
 					{
 						if (!item.IsShortcut && !FtpHelpers.IsFtpPath(item.ItemPath))
 						{
-							matchingStorageFile = await GetFileFromPathAsync(item.GetRequiredPath(), token);
-							if (matchingStorageFile is not null)
+							// Extended properties open each file; load them in the background on a share
+							var properties = await GetFilePropertiesAsync(item.GetRequiredPath(), isItemNetwork ? _fileSyncPropertyKeys : _fileAllPropertyKeys);
+							if (properties is not null)
 							{
 								token.ThrowIfCancellationRequested();
 
-								// A network share is never a cloud placeholder root, so skip that round-trip
-								var syncStatus = isItemNetwork ? CloudDriveSyncStatus.Unknown : await CheckCloudDriveSyncStatusAsync(matchingStorageFile);
-								var fileFRN = await FileTagsHelper.GetFileFRN(matchingStorageFile);
+								// A network share is never a cloud placeholder root
+								var syncStatus = isItemNetwork ? CloudDriveSyncStatus.Unknown : ToCloudDriveSyncStatus((int?)(properties[0] as uint?));
+								var fileFRN = properties[1] as ulong?;
 								var fileTag = await Task.Run(() => FileTagsHelper.ReadFileTag(item.GetRequiredPath()));
-
-								// Extended properties open each file; load them in the background on a share
-								var extraProperties = isItemNetwork ? null : await GetExtraProperties(matchingStorageFile);
 
 								var syncStatusUI = CloudDriveSyncStatusUI.FromCloudDriveSyncStatus(syncStatus);
 								var isElevationRequired = !syncStatusUI.LoadSyncStatus && await Task.Run(() => CheckElevationRights(item));
@@ -1729,43 +1743,21 @@ namespace Files.App.ViewModels
 
 								await dispatcherQueue.EnqueueOrInvokeAsync(() =>
 								{
-									var properties = extraProperties?.Result;
-									if (extraProperties is not null && properties is null)
-										throw new InvalidOperationException("A file-property lookup did not return properties.");
-
-									item.FolderRelativeId = matchingStorageFile.FolderRelativeId;
 									item.SyncStatusUI = syncStatusUI;
 									item.FileFRN = fileFRN;
 									item.FileTags = fileTag;
 									item.IsElevationRequired = isElevationRequired;
-									item.ImageDimensions = properties?["System.Image.Dimensions"]?.ToString() ?? string.Empty;
-									item.FileVersion = properties?["System.FileVersion"]?.ToString() ?? string.Empty;
-									item.MediaDuration = ulong.TryParse(properties?["System.Media.Duration"]?.ToString(), out ulong duration)
-											? TimeSpan.FromTicks((long)duration).ToString(@"hh\:mm\:ss")
-											: string.Empty;
-
-									switch (true)
-									{
-										case var _ when !string.IsNullOrEmpty(item.ImageDimensions):
-											item.ContextualProperty = $"{Strings.PropertyDimensions.GetLocalizedResource()}: {item.ImageDimensions}";
-											break;
-										case var _ when !string.IsNullOrEmpty(item.MediaDuration):
-											item.ContextualProperty = $"{Strings.PropertyDuration.GetLocalizedResource()}: {item.MediaDuration}";
-											break;
-										case var _ when !string.IsNullOrEmpty(item.FileVersion):
-											item.ContextualProperty = $"{Strings.PropertyVersion.GetLocalizedResource()}: {item.FileVersion}";
-											break;
-										default:
-											item.ContextualProperty = $"{Strings.Modified.GetLocalizedResource()}: {item.ItemDateModified}";
-											break;
-									}
+									if (isItemNetwork)
+										SetExtendedFileProperties(item, null, null, null);
+									else
+										SetExtendedFileProperties(item, properties[2] as string, properties[3] as ulong?, properties[4] as string);
 								},
 								Microsoft.UI.Dispatching.DispatcherQueuePriority.Low);
 
 								await Task.Run(() => SetFileTag(item));
 
 								if (isItemNetwork)
-									_ = LoadExtendedFilePropertiesInBackgroundAsync(item, matchingStorageFile, token);
+									_ = LoadExtendedFilePropertiesInBackgroundAsync(item, token);
 
 								wasSyncStatusLoaded = true;
 							}
@@ -1847,7 +1839,7 @@ namespace Files.App.ViewModels
 					}
 
 					if (loadGroupHeaderInfo && isFileTypeGroupMode)
-						groupImage = await GetItemTypeGroupIcon(item, matchingStorageFile);
+						groupImage = await GetItemTypeGroupIcon(item);
 				}
 				catch (Exception)
 				{
@@ -2682,6 +2674,11 @@ namespace Files.App.ViewModels
 				}
 			}
 
+			return ToCloudDriveSyncStatus(syncStatus);
+		}
+
+		private static CloudDriveSyncStatus ToCloudDriveSyncStatus(int? syncStatus)
+		{
 			if (syncStatus is null || !Enum.IsDefined(typeof(CloudDriveSyncStatus), syncStatus))
 				return CloudDriveSyncStatus.Unknown;
 
