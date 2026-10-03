@@ -3,6 +3,7 @@
 
 using System.IO;
 using System.Runtime.InteropServices.ComTypes;
+using Windows.Win32;
 using Windows.Win32.System.SystemServices;
 using Windows.Win32.UI.Shell;
 
@@ -163,9 +164,35 @@ namespace Files.App.Utils.Shell
 			}
 		}
 
+		[ThreadStatic]
+		private static (string Path, IShellItem Item)? t_parentFolder;
+
 		public static ShellItem GetShellItemFromPathOrPIDL(string pathOrPIDL)
 		{
-			return GetStringAsPIDL(pathOrPIDL, out var pPIDL) ? ShellItem.Open(pPIDL!) : ShellItem.Open(pathOrPIDL);
+			if (GetStringAsPIDL(pathOrPIDL, out var pPIDL))
+				return ShellItem.Open(pPIDL!);
+
+			// Pooled threads receive items folder by folder; parsing relative to the cached parent skips walking the namespace from the desktop for every file
+			var parentPath = STATask.IsPooledThread && Path.IsPathFullyQualified(pathOrPIDL) && !pathOrPIDL.StartsWith(@"\\?\", StringComparison.Ordinal)
+				? Path.GetDirectoryName(pathOrPIDL)
+				: null;
+			if (parentPath is null)
+				return ShellItem.Open(pathOrPIDL);
+
+			if (t_parentFolder?.Path != parentPath)
+			{
+				t_parentFolder = PInvoke.SHCreateItemFromParsingName(parentPath, null, out IShellItem parent).Succeeded ? (parentPath, parent) : null;
+				if (t_parentFolder is null)
+					return ShellItem.Open(pathOrPIDL);
+			}
+
+			if (PInvoke.SHCreateItemFromRelativeName(t_parentFolder.Value.Item, Path.GetFileName(pathOrPIDL), null, out IShellItem item).Failed)
+			{
+				t_parentFolder = null;
+				return ShellItem.Open(pathOrPIDL);
+			}
+
+			return ShellItem.Open(item);
 		}
 
 		private static DateTime ToDateTime(FILETIME value)

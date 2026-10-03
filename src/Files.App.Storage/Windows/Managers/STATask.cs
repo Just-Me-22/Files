@@ -19,6 +19,15 @@ namespace Files.App.Storage
 		private static readonly Channel<Action> _pooledQueue = Channel.CreateUnbounded<Action>();
 		private static bool _poolStarted;
 
+		[ThreadStatic]
+		private static bool t_isPooledThread;
+
+		/// <summary>
+		/// Gets whether the current thread is one of the persistent pooled STA threads, which outlive any single work item
+		/// and can therefore keep apartment-bound COM objects between calls.
+		/// </summary>
+		public static bool IsPooledThread => t_isPooledThread;
+
 		/// <summary>
 		/// Schedules the specified work on a shared pool of persistent STA threads, avoiding per-call thread creation.
 		/// </summary>
@@ -36,6 +45,7 @@ namespace Files.App.Storage
 						new(() =>
 						{
 							PInvoke.OleInitialize();
+							t_isPooledThread = true;
 
 							// Consume synchronously: awaiting here would resume on an MTA thread pool thread, losing the STA apartment
 							var reader = _pooledQueue.Reader;
