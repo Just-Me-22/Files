@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Files.Shared.Helpers;
+using System.Collections.Concurrent;
 using System.IO;
 using Windows.Storage.FileProperties;
 
@@ -52,10 +53,38 @@ namespace Files.App.Utils.Storage
 			var isRefusedLocalFile = false;
 			var result = await STATask.RunPooled(() => Win32Helper.GetIcon(resolvedPath, (int)size, isFolder, iconOptions, out isRefusedLocalFile), App.Logger);
 
-			if (isRefusedLocalFile && path is not null)
-				result = await BitmapHelper.CreateThumbnailAsync(path, size);
+			if (result is null && path is not null && (isRefusedLocalFile || iconOptions.HasFlag(IconOptions.ReturnOnlyIfCached)))
+				result = await GetDecodedThumbnailAsync(path, size, decodeIfMissing: isRefusedLocalFile);
 
 			return result;
+		}
+
+		// The shell never caches thumbnails it refused, and decoding one takes ~100 ms, so keep them for revisits and scrolling back
+		private static readonly ConcurrentDictionary<(string Path, uint Size), (DateTime Modified, byte[] Data)> _decodedThumbnails = new();
+		private static long _decodedThumbnailBytes;
+		private const long DecodedThumbnailBytesLimit = 64 * 1024 * 1024;
+
+		private static async Task<byte[]?> GetDecodedThumbnailAsync(string path, uint size, bool decodeIfMissing)
+		{
+			if (_decodedThumbnails.TryGetValue((path, size), out var cached) && cached.Modified == File.GetLastWriteTimeUtc(path))
+				return cached.Data;
+
+			if (!decodeIfMissing)
+				return null;
+
+			var modified = File.GetLastWriteTimeUtc(path);
+			var thumbnail = await BitmapHelper.CreateThumbnailAsync(path, size);
+			if (thumbnail is null)
+				return null;
+
+			if (Interlocked.Add(ref _decodedThumbnailBytes, thumbnail.Length) > DecodedThumbnailBytesLimit)
+			{
+				_decodedThumbnails.Clear();
+				Interlocked.Exchange(ref _decodedThumbnailBytes, thumbnail.Length);
+			}
+
+			_decodedThumbnails[(path, size)] = (modified, thumbnail);
+			return thumbnail;
 		}
 
 		/// <summary>
