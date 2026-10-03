@@ -66,13 +66,13 @@ namespace Files.App.Utils.Storage
 
 		private static async Task<byte[]?> GetDecodedThumbnailAsync(string path, uint size, bool decodeIfMissing)
 		{
-			if (_decodedThumbnails.TryGetValue((path, size), out var cached) && cached.Modified == File.GetLastWriteTimeUtc(path))
+			if (_decodedThumbnails.TryGetValue((path, size), out var cached) && cached.Modified == GetLastWriteTimeUtc(path))
 				return cached.Data;
 
 			if (!decodeIfMissing)
 				return null;
 
-			var modified = File.GetLastWriteTimeUtc(path);
+			var modified = GetLastWriteTimeUtc(path);
 			var thumbnail = await BitmapHelper.CreateThumbnailAsync(path, size);
 			if (thumbnail is null)
 				return null;
@@ -86,6 +86,10 @@ namespace Files.App.Utils.Storage
 			_decodedThumbnails[(path, size)] = (modified, thumbnail);
 			return thumbnail;
 		}
+
+		// Unreadable files report DateTime.MinValue rather than throwing out of a thumbnail request
+		private static DateTime GetLastWriteTimeUtc(string path)
+			=> SafetyExtensions.IgnoreExceptions(() => File.GetLastWriteTimeUtc(path));
 
 		/// <summary>
 		/// Returns overlay for given file or folder

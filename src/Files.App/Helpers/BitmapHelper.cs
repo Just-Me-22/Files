@@ -46,7 +46,7 @@ namespace Files.App.Helpers
 		{
 			try
 			{
-				using var source = await FileRandomAccessStream.OpenAsync(filePath, FileAccessMode.Read);
+				using var source = await FileRandomAccessStream.OpenAsync(filePath, FileAccessMode.Read, StorageOpenOptions.AllowReadersAndWriters, FileOpenDisposition.OpenExisting);
 				var decoder = await BitmapDecoder.CreateAsync(source);
 
 				// The decoder scales the stored pixels before applying EXIF rotation, so scale by the unrotated dimensions
