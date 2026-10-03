@@ -18,6 +18,7 @@ using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.Storage.FileSystem;
 using Windows.Win32.UI.Controls;
 using Windows.Win32.UI.Shell;
+using Windows.Win32.UI.Shell.PropertiesSystem;
 using Windows.Win32.UI.WindowsAndMessaging;
 using COMPRESSION_FORMAT = Windows.Win32.Storage.FileSystem.COMPRESSION_FORMAT;
 using HRESULT = Windows.Win32.Foundation.HRESULT;
@@ -152,13 +153,16 @@ namespace Files.App.Helpers
 		/// <param name="size"></param>
 		/// <param name="isFolder"></param>
 		/// <param name="iconOptions"></param>
+		/// <param name="isRefusedLocalFile">Set when the shell refused the thumbnail of a file that is fully on disk, so the caller can decode it directly.</param>
 		/// <returns></returns>
 		public static unsafe byte[]? GetIcon(
 			string? path,
 			int size,
 			bool isFolder,
-			IconOptions iconOptions)
+			IconOptions iconOptions,
+			out bool isRefusedLocalFile)
 		{
+			isRefusedLocalFile = false;
 			if (string.IsNullOrWhiteSpace(path))
 				return null;
 
@@ -185,6 +189,12 @@ namespace Files.App.Helpers
 
 					HBITMAP hbitmap = default;
 					var hres = shellFactory.GetImage(new(size, size), flags, &hbitmap);
+
+					// Sync providers that register no thumbnail handler (e.g. Proton Drive) make the shell refuse every uncached thumbnail, even for files fully on disk
+					isRefusedLocalFile = hres == HRESULT.WTS_E_NOSTORAGEPROVIDERTHUMBNAILHANDLER
+						&& shellItem.Properties.TryGetValue<uint>(PInvoke.PKEY_FilePlaceholderStatus, out var placeholderStatus)
+						&& ((PLACEHOLDER_STATES)placeholderStatus).HasFlag(PLACEHOLDER_STATES.PS_FULL_PRIMARY_STREAM_AVAILABLE);
+
 					try
 					{
 						if (hres == HRESULT.S_OK)

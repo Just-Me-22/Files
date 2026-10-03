@@ -40,6 +40,42 @@ namespace Files.App.Helpers
 		}
 
 		/// <summary>
+		/// Decodes the image file at <paramref name="filePath"/> into a PNG no larger than <paramref name="size"/> on its longest side.
+		/// </summary>
+		public static async Task<byte[]?> CreateThumbnailAsync(string filePath, uint size)
+		{
+			try
+			{
+				using var source = await FileRandomAccessStream.OpenAsync(filePath, FileAccessMode.Read);
+				var decoder = await BitmapDecoder.CreateAsync(source);
+
+				// The decoder scales the stored pixels before applying EXIF rotation, so scale by the unrotated dimensions
+				var scale = Math.Min(1d, (double)size / Math.Max(decoder.PixelWidth, decoder.PixelHeight));
+				var transform = new BitmapTransform
+				{
+					ScaledWidth = Math.Max(1u, (uint)(decoder.PixelWidth * scale)),
+					ScaledHeight = Math.Max(1u, (uint)(decoder.PixelHeight * scale)),
+					InterpolationMode = BitmapInterpolationMode.Fant,
+				};
+				using var bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, transform, ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
+
+				using var output = new InMemoryRandomAccessStream();
+				var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+				encoder.SetSoftwareBitmap(bitmap);
+				await encoder.FlushAsync();
+
+				var data = new byte[output.Size];
+				output.Seek(0);
+				await output.AsStreamForRead().ReadExactlyAsync(data);
+				return data;
+			}
+			catch (Exception)
+			{
+				return null;
+			}
+		}
+
+		/// <summary>
 		/// Rotates the image at the specified file path.
 		/// </summary>
 		/// <param name="filePath">The file path to the image.</param>

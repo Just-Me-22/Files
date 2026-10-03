@@ -99,6 +99,9 @@ FileOpenDialog
 IFileOpenDialog
 SHCreateItemFromParsingName
 SHCreateItemFromRelativeName
+WTS_E_NOSTORAGEPROVIDERTHUMBNAILHANDLER
+PKEY_FilePlaceholderStatus
+PLACEHOLDER_STATES
 FileSaveDialog
 IFileSaveDialog
 D3D_DRIVER_TYPE

@@ -49,7 +49,13 @@ namespace Files.App.Utils.Storage
 				? MtpHelpers.ResolveMtpShellPath(path) ?? path
 				: path;
 
-			return await STATask.RunPooled(() => Win32Helper.GetIcon(resolvedPath, (int)size, isFolder, iconOptions), App.Logger);
+			var isRefusedLocalFile = false;
+			var result = await STATask.RunPooled(() => Win32Helper.GetIcon(resolvedPath, (int)size, isFolder, iconOptions, out isRefusedLocalFile), App.Logger);
+
+			if (isRefusedLocalFile && path is not null)
+				result = await BitmapHelper.CreateThumbnailAsync(path, size);
+
+			return result;
 		}
 
 		/// <summary>
